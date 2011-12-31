@@ -182,6 +182,33 @@ One thing that's always needed when working with data is the ability to stop exe
 
 The idea here is that Validate() is called prior to Insert/Update. If it fails, an Error collection is populated and an InvalidOperationException is thrown. That simple. With each of the validations above, a message can be passed in.
 
+Accessible and Protected Properties
+-----------------------------------
+In order to use
+	var table = new Products();
+	var post = table.createFrom(Request.Form);
+
+You want to make sure the user can't update arbitrary parameters on the model. In order to prevent this you should define the variable "AccessibleProp" or "ProtectedProp" in your model:
+	
+	public class Products:DynamicModel {
+		public Products:base("MyConnectionString","Products","ID") {
+			AccessibleProp = new[] {"Title", "Price", "Description"}
+		}
+	}
+
+The accessible properties is the properties that can be saved and the protected properties is the properties that can't be saved. If neither of the variables are set, you can save all properties.
+
+If you want to update properties other than those in "AccessibleProp" (for example in a admin interface) you can set it to null like this:
+	
+	var table = new Products();
+	var post = table.CreateFrom(Request.Form);
+	// backup the list
+	var accessibleProp = table.AccessibleProp;
+	table.AccessibleProp = null;
+	table.save(post);
+	// reset
+	table.AccessibleProp = accessibleProp;
+
 CallBacks
 ---------
 Need something to happen After Update/Insert/Delete? Need to halt BeforeSave? Massive has callbacks to let you do just that:
@@ -200,6 +227,9 @@ The callbacks you can use are:
 *Inserted
 *Updated
 *Deleted
+*Saved
+*BeforeUpdate
+*BeforeInsert
 *BeforeDelete
 *BeforeSave
 
