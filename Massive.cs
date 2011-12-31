@@ -80,13 +80,48 @@ namespace Massive {
             }
             return result;
         }
-
         /// <summary>
         /// Turns the object into a Dictionary
         /// </summary>
         public static IDictionary<string, object> ToDictionary(this object thingy) {
             return (IDictionary<string, object>)thingy.ToExpando();
         }
+        /// <summary>
+        /// Filters the object to only contain the
+        /// proporties in the list
+        /// </summary>
+        public static object Filter(this object thingy, IList<string> filter)
+        {
+            if (filter == null || !filter.Any()) { return thingy; }
+            var d = thingy.ToDictionary();
+            var ex = new ExpandoObject();
+            var result = ex as IDictionary<string, object>;
+            foreach(var item in d) {
+                if (filter.Contains(item.Key)) {
+                    result.Add(item.Key, item.Value);
+                }
+            }
+            return ex;
+        }
+        /// <summary>
+        /// Removes the proporties in the list
+        /// </summary>
+        public static object Remove(this object thingy, IList<string> remove)
+        {
+            if (remove == null || !remove.Any()) { return thingy; }
+            var d = thingy.ToDictionary();
+            var ex = new ExpandoObject();
+            var result = ex as IDictionary<string, object>;
+            foreach (var item in d)
+            {
+                if (!remove.Contains(item.Key))
+                {
+                    result.Add(item.Key, item.Value);
+                }
+            }
+            return ex;
+        }
+
     }
 
     /// <summary>
@@ -117,8 +152,9 @@ namespace Massive {
             string primaryKeyField = "", string descriptorField = "") {
             TableName = tableName == "" ? this.GetType().Name : tableName;
             PrimaryKeyField = string.IsNullOrEmpty(primaryKeyField) ? "ID" : primaryKeyField;
-            DescriptorField = descriptorField;
             var _providerName = "System.Data.SqlClient";
+            if (ConfigurationManager.ConnectionStrings[connectionStringName].ProviderName != null)
+                _providerName = ConfigurationManager.ConnectionStrings[connectionStringName].ProviderName;
             _factory = DbProviderFactories.GetFactory(_providerName);
             ConnectionString = ConfigurationManager.ConnectionStrings[connectionStringName].ConnectionString;
         }
@@ -173,7 +209,12 @@ namespace Massive {
                 return result;
             }
         }
-        public string DescriptorField { get; protected set; }
+        private string _descriptorField;
+        public string DescriptorField {
+            get {
+                return _descriptorField;
+            }
+        }
         /// <summary>
         /// List out all the schema bits for use with ... whatever
         /// </summary>
@@ -185,7 +226,28 @@ namespace Massive {
                 return _schema;
             }
         }
-
+        private IList<string> _accessibleProp;
+        /// <summary>
+        /// The list of accessible properties
+        /// </summary>
+        public IList<string> AccessibleProp { 
+            get {
+                if (_accessibleProp != null) {
+                    // Add the primarykey to the accessibleProps
+                    // (otherwise we don't know if the record is new)
+                    return _accessibleProp.Contains(PrimaryKeyField) ?
+                    _accessibleProp : _accessibleProp.Concat(new[] { PrimaryKeyField }).ToList();
+                }
+                else {
+                    return null;
+                }
+            }
+            set { _accessibleProp = value; }
+        }
+        /// <summary>
+        /// The list of protected properties
+        /// </summary>
+        public IList<string> ProtectedProp { get; set; }
         /// <summary>
         /// Enumerates the reader yielding the result - thanks to Jeroen Haegebaert
         /// </summary>
@@ -314,52 +376,26 @@ namespace Massive {
         /// <summary>
         /// Returns a dynamic PagedResult. Result properties are Items, TotalPages, and TotalRecords.
         /// </summary>
-        public virtual dynamic Paged(string where = "", string orderBy = "", string columns = "*", int pageSize = 20, int currentPage = 1, params object[] args)
-        {
-            return BuildPagedResult(where: where, orderBy: orderBy, columns: columns, pageSize: pageSize, currentPage: currentPage, args: args);
-        }
-
-        public virtual dynamic Paged(string sql, string primaryKey, string where = "", string orderBy = "", string columns = "*", int pageSize = 20, int currentPage = 1, params object[] args)
-        {
-            return BuildPagedResult(sql, primaryKey, where, orderBy, columns, pageSize, currentPage, args);
-        }
-
-        private dynamic BuildPagedResult(string sql = "", string primaryKeyField = "", string where = "", string orderBy = "", string columns = "*", int pageSize = 20, int currentPage = 1, params object[] args)
-        {
+        public virtual dynamic Paged(string where = "", string orderBy = "", string columns = "*", int pageSize = 20, int currentPage = 1, params object[] args) {
             dynamic result = new ExpandoObject();
-            var countSQL = "";
-            if (!string.IsNullOrEmpty(sql))
-                countSQL = string.Format("SELECT COUNT({0}) FROM ({1}) AS PagedTable", primaryKeyField, sql);
-            else
-                countSQL = string.Format("SELECT COUNT({0}) FROM {1}", PrimaryKeyField, TableName);
-
+            var countSQL = string.Format("SELECT COUNT({0}) FROM {1}", PrimaryKeyField, TableName);
             if (String.IsNullOrEmpty(orderBy))
-            {
-                orderBy = string.IsNullOrEmpty(primaryKeyField) ? PrimaryKeyField : primaryKeyField;
-            }
+                orderBy = PrimaryKeyField;
 
-            if (!string.IsNullOrEmpty(where))
-            {
-                if (!where.Trim().StartsWith("where", StringComparison.CurrentCultureIgnoreCase))
-                {
+            if (!string.IsNullOrEmpty(where)) {
+                if (!where.Trim().StartsWith("where", StringComparison.OrdinalIgnoreCase)) {
                     where = "WHERE " + where;
                 }
             }
-
-            var query = "";
-            if (!string.IsNullOrEmpty(sql))
-                query = string.Format("SELECT {0} FROM (SELECT ROW_NUMBER() OVER (ORDER BY {2}) AS Row, {0} FROM ({3}) AS PagedTable {4}) AS Paged ", columns, pageSize, orderBy, sql, where);
-            else
-                query = string.Format("SELECT {0} FROM (SELECT ROW_NUMBER() OVER (ORDER BY {2}) AS Row, {0} FROM {3} {4}) AS Paged ", columns, pageSize, orderBy, TableName, where);
-
+            var sql = string.Format("SELECT {0} FROM (SELECT ROW_NUMBER() OVER (ORDER BY {2}) AS Row, {0} FROM {3} {4}) AS Paged ", columns, pageSize, orderBy, TableName, where);
             var pageStart = (currentPage - 1) * pageSize;
-            query += string.Format(" WHERE Row > {0} AND Row <={1}", pageStart, (pageStart + pageSize));
+            sql += string.Format(" WHERE Row > {0} AND Row <={1}", pageStart, (pageStart + pageSize));
             countSQL += where;
             result.TotalRecords = Scalar(countSQL, args);
             result.TotalPages = result.TotalRecords / pageSize;
             if (result.TotalRecords % pageSize > 0)
                 result.TotalPages += 1;
-            result.Items = Query(string.Format(query, columns, TableName), args);
+            result.Items = Query(string.Format(sql, columns, TableName), args);
             return result;
         }
         /// <summary>
@@ -385,9 +421,7 @@ namespace Massive {
             var sql = string.Format("SELECT {0},{1} FROM {2} ", PrimaryKeyField, DescriptorField, TableName);
             if (!String.IsNullOrEmpty(orderBy))
                 sql += "ORDER BY " + orderBy;
-
-            var results = Query(sql).ToList().Cast<IDictionary<string, object>>();
-            return results.ToDictionary(key => key[PrimaryKeyField].ToString(), value => value[DescriptorField]);
+            return (IDictionary<string, object>)Query(sql);
         }
 
         /// <summary>
@@ -407,12 +441,16 @@ namespace Massive {
         /// With a PK property (whatever PrimaryKeyField is set to) will be created at UPDATEs
         /// </summary>
         public virtual int Save(params object[] things) {
-            foreach (var item in things) {
-                if (!IsValid(item)) {
+            var list = new List<object>();
+            foreach (var item in things)
+            {
+                var newItem = item.Filter(AccessibleProp).Remove(ProtectedProp);
+                if (!IsValid(newItem)) {
                     throw new InvalidOperationException("Can't save this item: " + String.Join("; ", Errors.ToArray()));
                 }
+                list.Add(newItem);
             }
-            var commands = BuildCommands(things);
+            var commands = BuildCommands(list.ToArray());
             return Execute(commands);
         }
         public virtual DbCommand CreateInsertCommand(dynamic expando) {
@@ -491,11 +529,11 @@ namespace Massive {
         /// A regular old POCO, or a NameValueColletion from a Request.Form or Request.QueryString
         /// </summary>
         public virtual dynamic Insert(object o) {
-            var ex = o.ToExpando();
+            dynamic ex = o.Filter(AccessibleProp).Remove(ProtectedProp);
             if (!IsValid(ex)) {
                 throw new InvalidOperationException("Can't insert: " + String.Join("; ", Errors.ToArray()));
             }
-            if (BeforeSave(ex)) {
+            if (BeforeSave(ex)&&BeforeInsert(ex)) {
                 using (dynamic conn = OpenConnection()) {
                     var cmd = CreateInsertCommand(ex);
                     cmd.Connection = conn;
@@ -503,6 +541,7 @@ namespace Massive {
                     cmd.CommandText = "SELECT @@IDENTITY as newID";
                     ex.ID = cmd.ExecuteScalar();
                     Inserted(ex);
+                    Saved(ex);
                 }
                 return ex;
             } else {
@@ -514,14 +553,16 @@ namespace Massive {
         /// A regular old POCO, or a NameValueCollection from a Request.Form or Request.QueryString
         /// </summary>
         public virtual int Update(object o, object key) {
-            var ex = o.ToExpando();
+            dynamic ex = o.Filter(AccessibleProp).Remove(ProtectedProp);
             if (!IsValid(ex)) {
                 throw new InvalidOperationException("Can't Update: " + String.Join("; ", Errors.ToArray()));
             }
             var result = 0;
-            if (BeforeSave(ex)) {
+            if (BeforeSave(ex) && BeforeUpdate(ex))
+            {
                 result = Execute(CreateUpdateCommand(ex, key));
                 Updated(ex);
+                Saved(ex);
             }
             return result;
         }
@@ -550,8 +591,11 @@ namespace Massive {
         public virtual void Inserted(dynamic item) { }
         public virtual void Updated(dynamic item) { }
         public virtual void Deleted(dynamic item) { }
+        public virtual void Saved(dynamic item) { }
         public virtual bool BeforeDelete(dynamic item) { return true; }
         public virtual bool BeforeSave(dynamic item) { return true; }
+        public virtual bool BeforeInsert(dynamic item) { return true; }
+        public virtual bool BeforeUpdate(dynamic item) { return true; }
 
         //validation methods
         public virtual void ValidatesPresenceOf(object value, string message = "Required") {
@@ -582,7 +626,7 @@ namespace Massive {
             return Count(TableName);
         }
         public int Count(string tableName, string where="") {
-            return (int)Scalar("SELECT COUNT(*) FROM " + tableName+" "+where);
+            return (int)Scalar("SELECT COUNT(*) FROM " + tableName);
         }
 
         /// <summary>
