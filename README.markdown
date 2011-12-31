@@ -184,7 +184,8 @@ The idea here is that Validate() is called prior to Insert/Update. If it fails, 
 
 Accessible and Protected Properties
 -----------------------------------
-In order to use:
+In order to use
+
 	var table = new Products();
 	var post = table.createFrom(Request.Form);
 
